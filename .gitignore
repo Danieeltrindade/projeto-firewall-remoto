@@ -218,3 +218,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# ===== Projeto Firewall Remoto =====
+# Configuração local: contém o token secreto
+config.json
+
+# Certificados e chaves TLS: gerados em cada máquina, nunca versionados
+*.key
+*.crt
+*.pem
+
+# Logs gerados pelo servidor
+*.log
