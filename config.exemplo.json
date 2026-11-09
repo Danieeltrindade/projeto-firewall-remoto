@@ -1,0 +1,8 @@
+{
+  "servidor_host": "192.168.56.10",
+  "servidor_porta": 5000,
+  "token": "SUBSTITUA_PELO_TOKEN_GERADO",
+  "certificado": "certificados/servidor.crt",
+  "chave_privada": "certificados/servidor.key",
+  "timeout_segundos": 10
+}
