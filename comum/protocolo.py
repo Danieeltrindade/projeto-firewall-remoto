@@ -9,7 +9,8 @@ from pathlib import Path
 
 TAMANHO_MAXIMO = 4096  # bytes por mensagem, incluindo o "\n"
 DELIMITADOR = b"\n"
-CAMINHO_CONFIG = Path(__file__).resolve().parent.parent / "config.json"
+RAIZ_PROJETO = Path(__file__).resolve().parent.parent
+CAMINHO_CONFIG = RAIZ_PROJETO / "config.json"
 
 
 class MensagemMuitoGrande(Exception):
