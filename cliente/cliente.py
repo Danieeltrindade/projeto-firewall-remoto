@@ -3,14 +3,19 @@
 Menu interativo que envia requisições ao servidor da máquina B no formato
 definido em docs/protocolo.md e exibe as respostas de forma compreensível.
 
+A comunicação é protegida por TLS: o cliente só aceita o servidor que
+apresentar o certificado de certificados/servidor.crt.
+
 Execução (na raiz do projeto):  python -m cliente.cliente
 """
 
 import socket
+import ssl
 import uuid
 
 from comum.protocolo import (
     ConexaoEncerrada,
+    RAIZ_PROJETO,
     carregar_config,
     enviar_mensagem,
     receber_mensagem,
@@ -37,17 +42,29 @@ def montar_requisicao(token, acao, porta=None):
     return requisicao
 
 
-def abrir_conexao(config):
-    """Abre a conexão TCP com o servidor de controle."""
-    return socket.create_connection(
+def criar_contexto_tls(config):
+    """Prepara o TLS do cliente: confia apenas no certificado do servidor."""
+    contexto = ssl.create_default_context(cafile=RAIZ_PROJETO / config["certificado"])
+    contexto.minimum_version = ssl.TLSVersion.TLSv1_2
+    return contexto
+
+
+def abrir_conexao(config, contexto_tls):
+    """Abre a conexão TCP e faz o handshake TLS com o servidor de controle."""
+    conexao = socket.create_connection(
         (config["servidor_host"], config["servidor_porta"]),
         timeout=config["timeout_segundos"],
     )
+    try:
+        return contexto_tls.wrap_socket(conexao, server_hostname=config["servidor_host"])
+    except BaseException:
+        conexao.close()
+        raise
 
 
-def enviar_requisicao(config, requisicao):
+def enviar_requisicao(config, contexto_tls, requisicao):
     """Envia uma requisição e devolve a resposta do servidor (dicionário)."""
-    with abrir_conexao(config) as conexao:
+    with abrir_conexao(config, contexto_tls) as conexao:
         enviar_mensagem(conexao, requisicao)
         return receber_mensagem(conexao)
 
@@ -77,13 +94,17 @@ def exibir_resposta(resposta):
             print(f"  - {regra.get('nome')} | porta {regra.get('porta')} | {regra.get('acao')}")
 
 
-def executar_acao(config, acao):
+def executar_acao(config, contexto_tls, acao):
     """Monta, envia e exibe uma requisição, tratando falhas de comunicação."""
     porta = perguntar_porta() if acao in ("bloquear", "desbloquear") else None
     requisicao = montar_requisicao(config["token"], acao, porta)
 
     try:
-        resposta = enviar_requisicao(config, requisicao)
+        resposta = enviar_requisicao(config, contexto_tls, requisicao)
+    except ssl.SSLCertVerificationError:
+        print("\n[FALHA] O certificado do servidor não confere. Conexão recusada por segurança.")
+    except ssl.SSLError as erro:
+        print(f"\n[FALHA] Erro na negociação TLS: {erro}")
     except ConnectionRefusedError:
         print("\n[FALHA] O servidor recusou a conexão. Ele está em execução na máquina B?")
     except TimeoutError:
@@ -114,6 +135,12 @@ def main():
         print("Arquivo config.json não encontrado. Copie config.exemplo.json para config.json.")
         return
 
+    try:
+        contexto_tls = criar_contexto_tls(config)
+    except FileNotFoundError:
+        print(f"Certificado não encontrado: {config['certificado']}. Copie o servidor.crt da máquina B.")
+        return
+
     while True:
         mostrar_menu(config)
         escolha = input("Opção: ").strip()
@@ -122,7 +149,7 @@ def main():
             print("Encerrando o cliente.")
             break
         if escolha in OPCOES:
-            executar_acao(config, OPCOES[escolha])
+            executar_acao(config, contexto_tls, OPCOES[escolha])
         else:
             print("Opção inválida. Escolha 0, 1, 2 ou 3.")
 
