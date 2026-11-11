@@ -1,8 +1,8 @@
 """Servidor de controle da máquina B (Integrante 1).
 
 Recebe uma requisição JSON por conexão, protegida por TLS, e responde com JSON estruturado.
-Nesta versão o servidor apenas confirma o recebimento: autenticação,
-validação e firewall serão ligados nas Issues #7, #8 e #11.
+Toda requisição precisa trazer o token correto (Issue #7). Validação dos
+campos e firewall serão ligados nas Issues #8 e #11.
 
 Execução (na raiz do projeto):  python -m servidor.servidor
 """
@@ -19,6 +19,7 @@ from comum.protocolo import (
     enviar_mensagem,
     receber_linha,
 )
+from servidor.autenticacao import token_configurado_valido, token_valido
 
 TEMPO_LIMITE = 10  # segundos para o cliente enviar a requisição completa
 
@@ -34,7 +35,7 @@ def montar_resposta(id_requisicao, status, codigo, mensagem, dados=None):
     }
 
 
-def processar_linha(linha):
+def processar_linha(linha, token_esperado):
     """Interpreta a linha recebida e devolve o dicionário de resposta."""
     try:
         requisicao = json.loads(linha.decode("utf-8"))
@@ -52,8 +53,14 @@ def processar_linha(linha):
     if not isinstance(id_requisicao, str) or not 1 <= len(id_requisicao) <= 64:
         id_requisicao = None
 
-    # PROVISÓRIO (Issue #4): apenas confirma o recebimento.
-    # Será substituído por autenticação (#7), validação (#8) e firewall (#11).
+    # Autenticação antes de qualquer outra verificação (docs/protocolo.md, seção 4)
+    if not token_valido(requisicao.get("token"), token_esperado):
+        return montar_resposta(
+            id_requisicao, "erro", "TOKEN_INVALIDO", "Autenticação recusada."
+        )
+
+    # PROVISÓRIO: confirma o recebimento de requisições autenticadas.
+    # Será substituído pela validação (#8) e pelo firewall (#11).
     return montar_resposta(
         id_requisicao,
         "ok",
@@ -74,13 +81,13 @@ def criar_contexto_tls(config):
     return contexto
 
 
-def atender_cliente(conexao, endereco):
+def atender_cliente(conexao, endereco, token_esperado):
     """Recebe uma requisição, responde e retorna (uma requisição por conexão)."""
     ip_cliente = endereco[0]
 
     try:
         linha = receber_linha(conexao)
-        resposta = processar_linha(linha)
+        resposta = processar_linha(linha, token_esperado)
     except MensagemMuitoGrande:
         resposta = montar_resposta(
             None,
@@ -122,6 +129,13 @@ def iniciar_servidor():
     config = carregar_config()
     host = config["servidor_host"]
     porta = config["servidor_porta"]
+    token_esperado = config["token"]
+
+    if not token_configurado_valido(token_esperado):
+        print("ERRO: o token do config.json é o de exemplo ou tem menos de 32 caracteres.")
+        print("Gere um token novo e coloque o mesmo valor no config.json das duas máquinas.")
+        return
+
     contexto_tls = criar_contexto_tls(config)
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as servidor:
@@ -141,7 +155,7 @@ def iniciar_servidor():
                 conexao_tls = aceitar_tls(conexao, endereco, contexto_tls)
                 if conexao_tls is not None:
                     with conexao_tls:
-                        atender_cliente(conexao_tls, endereco)
+                        atender_cliente(conexao_tls, endereco, token_esperado)
 
 
 if __name__ == "__main__":
