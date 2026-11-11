@@ -2,7 +2,8 @@
 
 Recebe uma requisição JSON por conexão, protegida por TLS, e responde com JSON estruturado.
 Toda requisição precisa trazer o token correto (Issue #7) e respeitar o
-contrato: ações e portas permitidas (Issue #8). O firewall entra na Issue #11.
+contrato: ações e portas permitidas (Issue #8). Requisições válidas são
+executadas no Windows Firewall (Issue #11).
 
 Os eventos são registrados no console e no arquivo servidor.log (Issue #9).
 O token nunca é registrado.
@@ -24,6 +25,7 @@ from comum.protocolo import (
     receber_linha,
 )
 from servidor.autenticacao import token_configurado_valido, token_valido
+from servidor import firewall
 from servidor.validacao import PORTAS_AUTORIZADAS, RequisicaoInvalida, validar_requisicao
 
 TEMPO_LIMITE = 10  # segundos para o cliente enviar a requisição completa
@@ -85,12 +87,38 @@ def processar_linha(linha, token_esperado):
         return montar_resposta(id_requisicao, "erro", erro.codigo, erro.mensagem)
 
     # PROVISÓRIO: a requisição é válida. A execução no firewall entra na Issue #11.
+        # Execução no Windows Firewall (docs/protocolo.md, seção 4, etapa 7)
+    try:
+        return executar_acao(id_requisicao, acao, porta)
+    except firewall.ErroFirewall as erro:
+        return montar_resposta(
+            id_requisicao, "erro", "ERRO_FIREWALL", f"Falha ao executar no firewall: {erro}"
+        )
+
+
+def executar_acao(id_requisicao, acao, porta):
+    """Executa a ação já validada no firewall e monta a resposta de sucesso."""
+    if acao == "bloquear":
+        regra = firewall.bloquear_porta(porta)
+        return montar_resposta(
+            id_requisicao, "ok", "REGRA_CRIADA",
+            f"Regra de bloqueio criada para a porta TCP {porta}.",
+            {"porta": porta, "regra": regra},
+        )
+
+    if acao == "desbloquear":
+        firewall.desbloquear_porta(porta)
+        return montar_resposta(
+            id_requisicao, "ok", "REGRA_REMOVIDA",
+            f"Regra de bloqueio da porta TCP {porta} removida.",
+            {"porta": porta},
+        )
+
+    regras = firewall.consultar_regras()
     return montar_resposta(
-        id_requisicao,
-        "ok",
-        "RECEBIDO",
-        "Requisição válida recebida pelo servidor.",
-        {"acao": acao, "porta": porta},
+        id_requisicao, "ok", "CONSULTA_REALIZADA",
+        f"{len(regras)} regra(s) do projeto encontrada(s).",
+        {"regras": regras},
     )
 
 
