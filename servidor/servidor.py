@@ -1,8 +1,8 @@
 """Servidor de controle da máquina B (Integrante 1).
 
 Recebe uma requisição JSON por conexão, protegida por TLS, e responde com JSON estruturado.
-Toda requisição precisa trazer o token correto (Issue #7). Validação dos
-campos e firewall serão ligados nas Issues #8 e #11.
+Toda requisição precisa trazer o token correto (Issue #7) e respeitar o
+contrato: ações e portas permitidas (Issue #8). O firewall entra na Issue #11.
 
 Execução (na raiz do projeto):  python -m servidor.servidor
 """
@@ -20,6 +20,7 @@ from comum.protocolo import (
     receber_linha,
 )
 from servidor.autenticacao import token_configurado_valido, token_valido
+from servidor.validacao import RequisicaoInvalida, validar_requisicao
 
 TEMPO_LIMITE = 10  # segundos para o cliente enviar a requisição completa
 
@@ -44,6 +45,7 @@ def processar_linha(linha, token_esperado):
             None, "erro", "JSON_INVALIDO", "A requisição não é um JSON válido."
         )
 
+
     if not isinstance(requisicao, dict):
         return montar_resposta(
             None, "erro", "JSON_INVALIDO", "A requisição deve ser um objeto JSON."
@@ -59,16 +61,20 @@ def processar_linha(linha, token_esperado):
             id_requisicao, "erro", "TOKEN_INVALIDO", "Autenticação recusada."
         )
 
-    # PROVISÓRIO: confirma o recebimento de requisições autenticadas.
-    # Será substituído pela validação (#8) e pelo firewall (#11).
+        # Campos, tipos, ação e porta (docs/protocolo.md, seção 4, etapas 4 a 6)
+    try:
+        acao, porta = validar_requisicao(requisicao)
+    except RequisicaoInvalida as erro:
+        return montar_resposta(id_requisicao, "erro", erro.codigo, erro.mensagem)
+
+    # PROVISÓRIO: a requisição é válida. A execução no firewall entra na Issue #11.
     return montar_resposta(
         id_requisicao,
         "ok",
         "RECEBIDO",
-        "Requisição recebida pelo servidor.",
-        {"acao": requisicao.get("acao")},
+        "Requisição válida recebida pelo servidor.",
+        {"acao": acao, "porta": porta},
     )
-
 
 def criar_contexto_tls(config):
     """Prepara o TLS do servidor: certificado + chave privada, TLS 1.2 ou superior."""
