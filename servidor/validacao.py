@@ -48,7 +48,7 @@ def validar_requisicao(requisicao):
     if acao not in ACOES_PERMITIDAS:
         raise RequisicaoInvalida(
             "ACAO_INVALIDA",
-            f"Ação '{acao}' não permitida. Use: bloquear, desbloquear ou consultar.",
+            f"Ação {acao!r} não permitida. Use: bloquear, desbloquear ou consultar.",
         )
 
     if acao not in ACOES_COM_PORTA:
