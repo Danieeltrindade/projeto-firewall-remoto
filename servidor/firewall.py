@@ -5,6 +5,7 @@ Só comandos fixos são executados: o único valor variável é a porta, que
 precisa ser um inteiro da lista de portas autorizadas.
 """
 
+import ctypes
 import json
 import subprocess
 
@@ -17,6 +18,23 @@ TEMPO_LIMITE_POWERSHELL = 30  # segundos
 
 class ErroFirewall(Exception):
     """Falha ao executar uma operação no Windows Firewall."""
+
+
+class SemPrivilegio(ErroFirewall):
+    """O processo não tem privilégio de Administrador para alterar o firewall."""
+
+
+def executando_como_administrador():
+    """True se o processo atual tem privilégio de Administrador no Windows."""
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (AttributeError, OSError):
+        return False  # fora do Windows, ou a consulta falhou: assume que não
+
+
+def _exigir_administrador():
+    if not executando_como_administrador():
+        raise SemPrivilegio("O servidor precisa ser executado como Administrador.")
 
 
 def nome_da_regra(porta):
@@ -52,13 +70,28 @@ def _executar_powershell(script):
     saida = resultado.stdout.decode("utf-8", errors="replace").strip()
     if resultado.returncode != 0:
         mensagem = resultado.stderr.decode("utf-8", errors="replace").strip()
+        if "Access is denied" in mensagem or "Acesso negado" in mensagem:
+            raise SemPrivilegio(mensagem)
         raise ErroFirewall(mensagem or f"PowerShell terminou com código {resultado.returncode}.")
     return saida
 
 
-def bloquear_porta(porta):
-    """Cria a regra de entrada que bloqueia TCP na porta. Devolve o nome da regra."""
+def regra_existe(porta):
+    """True se a regra do projeto para a porta já existe no firewall."""
     _conferir_porta(porta)
+    resposta = _executar_powershell(
+        f"if (Get-NetFirewallRule -Name '{nome_da_regra(porta)}' -ErrorAction SilentlyContinue) "
+        "{ 'sim' } else { 'nao' }"
+    )
+    return resposta == "sim"
+
+
+def bloquear_porta(porta):
+    """Bloqueia TCP na porta. Devolve True se criou a regra, False se ela já existia."""
+    _conferir_porta(porta)
+    _exigir_administrador()
+    if regra_existe(porta):
+        return False  # idempotente: não cria duplicata
     nome = nome_da_regra(porta)
     _executar_powershell(
         f"New-NetFirewallRule -Name '{nome}' -DisplayName '{nome}' -Group '{GRUPO}' "
@@ -66,15 +99,17 @@ def bloquear_porta(porta):
         f"-Direction Inbound -Protocol TCP -LocalPort {porta} -Action Block -Profile Any "
         "| Out-Null"
     )
-    return nome
+    return True
 
 
 def desbloquear_porta(porta):
-    """Remove a regra de bloqueio da porta. Devolve o nome da regra."""
+    """Remove o bloqueio da porta. Devolve True se removeu, False se não havia regra."""
     _conferir_porta(porta)
-    nome = nome_da_regra(porta)
-    _executar_powershell(f"Remove-NetFirewallRule -Name '{nome}'")
-    return nome
+    _exigir_administrador()
+    if not regra_existe(porta):
+        return False  # idempotente: nada a remover
+    _executar_powershell(f"Remove-NetFirewallRule -Name '{nome_da_regra(porta)}'")
+    return True
 
 
 def consultar_regras():
