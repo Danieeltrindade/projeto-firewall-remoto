@@ -128,3 +128,14 @@ def consultar_regras():
             regra["porta"] = int(regra["porta"])
         regra["habilitada"] = regra.get("habilitada") == "True"
     return regras
+
+
+def remover_regras_do_projeto():
+    """Remove todas as regras do grupo do projeto, e só elas. Devolve quantas removeu."""
+    _exigir_administrador()
+    saida = _executar_powershell(
+        f"$regras = @(Get-NetFirewallRule -Group '{GRUPO}' -ErrorAction SilentlyContinue); "
+        "$regras | Remove-NetFirewallRule; "
+        "$regras.Count"
+    )
+    return int(saida) if saida.isdigit() else 0
