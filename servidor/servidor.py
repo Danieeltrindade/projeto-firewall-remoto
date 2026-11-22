@@ -2,7 +2,8 @@
 
 Recebe uma requisição JSON por conexão, protegida por TLS, e responde com JSON estruturado.
 Toda requisição precisa trazer o token correto (Issue #7) e respeitar o
-contrato: ações e portas permitidas (Issue #8). O firewall entra na Issue #11.
+contrato: ações e portas permitidas (Issue #8). Requisições válidas são
+executadas no Windows Firewall (Issue #11).
 
 Os eventos são registrados no console e no arquivo servidor.log (Issue #9).
 O token nunca é registrado.
@@ -23,6 +24,7 @@ from comum.protocolo import (
     enviar_mensagem,
     receber_linha,
 )
+from servidor import firewall
 from servidor.autenticacao import token_configurado_valido, token_valido
 from servidor.validacao import PORTAS_AUTORIZADAS, RequisicaoInvalida, validar_requisicao
 
@@ -84,13 +86,51 @@ def processar_linha(linha, token_esperado):
     except RequisicaoInvalida as erro:
         return montar_resposta(id_requisicao, "erro", erro.codigo, erro.mensagem)
 
-    # PROVISÓRIO: a requisição é válida. A execução no firewall entra na Issue #11.
+    # Execução no Windows Firewall (docs/protocolo.md, seção 4, etapa 7)
+    try:
+        return executar_acao(id_requisicao, acao, porta)
+    except firewall.SemPrivilegio:
+        return montar_resposta(
+            id_requisicao, "erro", "SEM_PRIVILEGIO",
+            "O servidor precisa ser executado como Administrador para alterar o firewall.",
+        )
+    except firewall.ErroFirewall as erro:
+        return montar_resposta(
+            id_requisicao, "erro", "ERRO_FIREWALL", f"Falha ao executar no firewall: {erro}"
+        )
+
+
+def executar_acao(id_requisicao, acao, porta):
+    """Executa a ação já validada no firewall e monta a resposta de sucesso."""
+    if acao == "bloquear":
+        dados = {"porta": porta, "regra": firewall.nome_da_regra(porta)}
+        if firewall.bloquear_porta(porta):
+            return montar_resposta(
+                id_requisicao, "ok", "REGRA_CRIADA",
+                f"Regra de bloqueio criada para a porta TCP {porta}.", dados,
+            )
+        return montar_resposta(
+            id_requisicao, "ok", "REGRA_JA_EXISTE",
+            f"A porta TCP {porta} já estava bloqueada. Nenhuma alteração foi feita.", dados,
+        )
+
+    if acao == "desbloquear":
+        if firewall.desbloquear_porta(porta):
+            return montar_resposta(
+                id_requisicao, "ok", "REGRA_REMOVIDA",
+                f"Regra de bloqueio da porta TCP {porta} removida.", {"porta": porta},
+            )
+        return montar_resposta(
+            id_requisicao, "ok", "REGRA_INEXISTENTE",
+            f"Não havia regra de bloqueio para a porta TCP {porta}. Nenhuma alteração foi feita.",
+            {"porta": porta},
+        )
+
+    regras = firewall.consultar_regras()
     return montar_resposta(
-        id_requisicao,
-        "ok",
-        "RECEBIDO",
-        "Requisição válida recebida pelo servidor.",
-        {"acao": acao, "porta": porta},
+        id_requisicao, "ok", "CONSULTA_REALIZADA",
+        f"{len(regras)} regra(s) do projeto encontrada(s).",
+        {"regras": regras},
     )
 
 
@@ -173,6 +213,10 @@ def iniciar_servidor():
         log.error("O token do config.json é o de exemplo ou tem menos de 32 caracteres.")
         log.error("Gere um token novo e coloque o mesmo valor no config.json das duas máquinas.")
         return
+
+    if not firewall.executando_como_administrador():
+        log.warning("Servidor SEM privilégio de Administrador: bloquear e desbloquear vão responder SEM_PRIVILEGIO.")
+        log.warning("Para alterar o firewall, execute o servidor em um terminal como Administrador.")
 
     contexto_tls = criar_contexto_tls(config)
 

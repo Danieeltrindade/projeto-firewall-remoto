@@ -6,6 +6,7 @@ Não precisa de rede nem da máquina B.
 
 import json
 import unittest
+from unittest import mock
 
 from servidor.servidor import processar_linha
 from servidor.validacao import RequisicaoInvalida, validar_requisicao
@@ -100,10 +101,12 @@ class TestOrdemProcessamento(unittest.TestCase):
         del dados["token"]
         self.assertEqual(self.processar(dados)["codigo"], "TOKEN_INVALIDO")
 
-    def test_requisicao_valida_autenticada(self):
-        resposta = self.processar(requisicao())
-        self.assertEqual(resposta["status"], "ok")
-        self.assertEqual(resposta["dados"], {"acao": "bloquear", "porta": 8080})
+    def test_requisicao_valida_chega_ao_firewall(self):
+        # mock: substitui o firewall real por um falso, para o teste nunca mexer no Windows
+        with mock.patch("servidor.firewall.bloquear_porta", return_value="regra-falsa") as falso:
+            resposta = self.processar(requisicao())
+        falso.assert_called_once_with(8080)
+        self.assertEqual(resposta["codigo"], "REGRA_CRIADA")
 
     def test_resposta_tem_cinco_campos(self):
         resposta = self.processar(requisicao(porta=3389))
